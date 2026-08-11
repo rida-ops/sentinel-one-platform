@@ -1,0 +1,25 @@
+{
+  "name": "@sentinel/database",
+  "version": "0.1.0",
+  "description": "Prisma schema and database utilities",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "generate": "prisma generate",
+    "db:setup": "prisma migrate deploy",
+    "db:reset": "prisma migrate reset --force",
+    "migration:create": "prisma migrate dev",
+    "migration:rollback": "prisma migrate resolve --rolled-back",
+    "db:seed": "node scripts/seed.js",
+    "build": "tsc",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@prisma/cli": "^5.7.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.7.0"
+  }
+}

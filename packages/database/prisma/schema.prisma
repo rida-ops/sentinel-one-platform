@@ -1,0 +1,360 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ORGANIZATIONS & STRUCTURE
+// ============================================================================
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  logoUrl   String?
+  settings  Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  departments  Department[]
+  users        User[]
+  locations    Location[]
+  incidents    Incident[]
+  tasks        Task[]
+  notifications Notification[]
+  auditEvents  AuditEvent[]
+  permissions  Permission[]
+
+  @@map("organizations")
+}
+
+model Department {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  code           String
+  color          String   @default("#3B82F6")
+  capabilities   String[] @default([])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  users     User[]
+  incidents Incident[]
+  tasks     Task[]
+
+  @@unique([organizationId, code])
+  @@map("departments")
+}
+
+model Location {
+  id              String   @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name            String
+  address         String
+  latitude        Float
+  longitude       Float
+  type            String   @default("generic") // station, facility, etc
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  incidents Incident[]
+
+  @@index([organizationId])
+  @@map("locations")
+}
+
+// ============================================================================
+// USERS & AUTHENTICATION
+// ============================================================================
+
+enum Role {
+  PLATFORM_OWNER
+  SUPER_ADMIN
+  MUNICIPALITY_ADMIN
+  DEPARTMENT_MANAGER
+  DISPATCHER
+  OPERATOR
+  FIELD_WORKER
+  CITIZEN
+}
+
+model User {
+  id                String   @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  departmentId      String?
+  department        Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  email             String
+  username          String
+  passwordHash      String
+  firstName         String
+  lastName          String
+  avatarUrl         String?
+  role              Role
+  isActive          Boolean      @default(true)
+  emailVerifiedAt   DateTime?
+  lastLoginAt       DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  sessions      Session[]
+  refreshTokens RefreshToken[]
+  apiKeys       ApiKey[]
+  incidents     Incident[]       @relation("reporter")
+  tasks         Task[]           @relation("assignee")
+  auditEvents   AuditEvent[]
+  notifications Notification[]
+
+  @@unique([organizationId, email])
+  @@unique([organizationId, username])
+  @@index([organizationId])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId  String
+  ipAddress String
+  userAgent String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  lastActiveAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model ApiKey {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  key       String   @unique
+  lastUsedAt DateTime?
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("api_keys")
+}
+
+// ============================================================================
+// PERMISSIONS & RBAC
+// ============================================================================
+
+model Permission {
+  id          String   @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  category    String   // incidents, tasks, users, admin
+  createdAt   DateTime @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String   @id @default(cuid())
+  role         Role
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+
+  @@unique([role, permissionId])
+  @@map("role_permissions")
+}
+
+// ============================================================================
+// INCIDENTS (M3)
+// ============================================================================
+
+enum IncidentState {
+  REPORTED
+  TRIAGED
+  ASSIGNED
+  ACKNOWLEDGED
+  IN_PROGRESS
+  ON_SCENE
+  RESOLVED
+  CLOSED
+  CANCELLED
+}
+
+enum Urgency {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model Incident {
+  id              String   @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  departmentId    String?
+  department      Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  locationId      String?
+  location        Location?    @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  reporterId      String
+  reporter        User     @relation("reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  latitude        Float
+  longitude       Float
+  category        String   // FIRE, WATER, ROAD, ELECTRICITY, etc
+  description     String
+  urgency         Urgency
+  state           IncidentState @default(REPORTED)
+  aiClassification Json?    // M8: AI classification results
+  resolvedAt      DateTime?
+  closedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  attachments Attachment[]
+  tasks       Task[]
+  timeline    AuditEvent[]
+
+  @@index([organizationId])
+  @@index([departmentId])
+  @@index([state])
+  @@map("incidents")
+}
+
+model Attachment {
+  id        String   @id @default(cuid())
+  incidentId String
+  incident  Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  type      String   // image, video, document
+  url       String
+  size      Int
+  uploadedAt DateTime @default(now())
+
+  @@index([incidentId])
+  @@map("attachments")
+}
+
+// ============================================================================
+// TASKS (M3)
+// ============================================================================
+
+enum TaskState {
+  PENDING
+  ASSIGNED
+  ACKNOWLEDGED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Task {
+  id          String   @id @default(cuid())
+  incidentId  String
+  incident    Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  departmentId String
+  department  Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  assignedToId String?
+  assignedTo  User?    @relation("assignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  description String
+  state       TaskState @default(PENDING)
+  priority    Urgency   @default(MEDIUM)
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([incidentId])
+  @@index([departmentId])
+  @@index([assignedToId])
+  @@index([state])
+  @@map("tasks")
+}
+
+// ============================================================================
+// NOTIFICATIONS
+// ============================================================================
+
+model Notification {
+  id            String   @id @default(cuid())
+  organizationId String
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  message       String
+  type          String   // incident_created, task_assigned, etc
+  data          Json?
+  isRead        Boolean  @default(false)
+  readAt        DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([organizationId])
+  @@map("notifications")
+}
+
+// ============================================================================
+// AUDIT LOGGING
+// ============================================================================
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  STATE_CHANGE
+  ASSIGN
+  REASSIGN
+  LOGIN
+  LOGOUT
+  PERMISSION_DENIED
+}
+
+model AuditEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incidentId     String?
+  incident       Incident?    @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  entityType     String   // incident, task, user, etc
+  entityId       String
+  action         AuditAction
+  changes        Json     @default("{}")
+  ipAddress      String
+  userAgent      String
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([incidentId])
+  @@index([entityType])
+  @@map("audit_events")
+}
